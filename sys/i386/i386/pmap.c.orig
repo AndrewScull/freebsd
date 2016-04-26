@@ -773,8 +773,6 @@ pmap_init(void)
 	    CPUID2_AVX | CPUID2_XSAVE)) == 0 && (amd_feature2 & (AMDID2_XOP |
 	    AMDID2_FMA4)) == 0)
 		workaround_erratum383 = 1;
-	if (bootverbose && workaround_erratum383)
-		printf("workaround_erratum383 enabled\n");
 
 	/*
 	 * Are large page mappings supported and enabled?

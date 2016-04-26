@@ -54,7 +54,6 @@ __FBSDID("$FreeBSD$");
 uint64_t	tsc_freq;
 int		tsc_is_invariant;
 int		tsc_perf_stat;
-TUNABLE_ULONG("machdep.tsc_freq", &tsc_freq);
 
 static eventhandler_tag tsc_levels_tag, tsc_pre_tag, tsc_post_tag;
 
@@ -80,13 +79,11 @@ SYSCTL_INT(_kern_timecounter, OID_AUTO, tsc_shift, CTLFLAG_RDTUN,
 TUNABLE_INT("kern.timecounter.tsc_shift", &tsc_shift);
 
 static int	tsc_disabled;
-TUNABLE_INT("machdep.disable_tsc", &tsc_disabled);
 SYSCTL_INT(_machdep, OID_AUTO, disable_tsc, CTLFLAG_RDTUN, &tsc_disabled, 0,
     "Disable x86 Time Stamp Counter");
 TUNABLE_INT("machdep.disable_tsc", &tsc_disabled);
 
 static int	tsc_skip_calibration;
-TUNABLE_INT("machdep.disable_tsc_calibration", &tsc_skip_calibration);
 SYSCTL_INT(_machdep, OID_AUTO, disable_tsc_calibration, CTLFLAG_RDTUN,
     &tsc_skip_calibration, 0, "Disable TSC frequency calibration");
 TUNABLE_INT("machdep.disable_tsc_calibration", &tsc_skip_calibration);
@@ -254,9 +251,6 @@ probe_tsc_freq(void)
 	if (tsc_skip_calibration) {
 		if (cpu_vendor_id == CPU_VENDOR_INTEL)
 			tsc_freq_intel();
-		if (bootverbose)
-			printf("Skipped TSC calibration. tsc_freq=%ju Hz\n",
-			    (uintmax_t)tsc_freq);
 		return;
 	}
 

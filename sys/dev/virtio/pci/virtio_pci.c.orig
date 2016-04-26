@@ -268,13 +268,8 @@ vtpci_attach(device_t dev)
 	pci_enable_busmaster(dev);
 
 	rid = PCIR_BAR(0);
-#if defined(__arm__) || defined(__aarch64__)
-	sc->vtpci_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-	    RF_ACTIVE);
-#else
 	sc->vtpci_res = bus_alloc_resource_any(dev, SYS_RES_IOPORT, &rid,
 	    RF_ACTIVE);
-#endif
 	if (sc->vtpci_res == NULL) {
 		device_printf(dev, "cannot map I/O space\n");
 		return (ENXIO);
