@@ -17,6 +17,8 @@ SRCS=		dtrace.c \
 .PATH: ${.CURDIR}/../../../cddl/dev/dtrace/x86
 SRCS+=		dis_tables.c \
 		instr_size.c
+.PATH: ${.CURDIR}/../../../cddl/contrib/opensolaris/uts/intel/dtrace
+SRCS+=		dtrace_jit_isa.c
 CFLAGS+=	-I${.CURDIR}/../../../cddl/contrib/opensolaris/uts/intel \
 		-I${.CURDIR}/../../../cddl/dev/dtrace/x86
 .endif

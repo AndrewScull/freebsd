@@ -855,6 +855,45 @@ typedef struct dof_xlref {
 } dof_xlref_t;
 
 /*
+ * DTrace JIT Helpers
+ *
+ * The JIT still uses the same functions as the emulator only the calls are
+ * made from native code. This structure is used to pass the pointers to the
+ * JIT so they can be inserted as required. These function are static and this
+ * method allows them to remain static.
+ */
+/* TODO(andrew): This is messy. How to do it properly? */
+struct dtrace_difo;
+struct dtrace_mstate;
+struct dtrace_state;
+struct dtrace_vstate;
+struct dtrace_dstate;
+struct dtrace_dynvar;
+struct dtrace_key;
+enum dtrace_dynvar_op;
+typedef struct dtrace_jit_helpers {
+	uint64_t (*dif_variable)(struct dtrace_mstate *, struct dtrace_state *,
+	    uint64_t, uint64_t);
+	uint64_t (*tls_thrkey)(void);
+	int (*canload)(uint64_t, size_t, struct dtrace_mstate *,
+	    struct dtrace_vstate *);
+	uint8_t (*load8)(uintptr_t);
+	int (*strcanload)(uint64_t, size_t, struct dtrace_mstate *,
+	    struct dtrace_vstate *);
+	int (*strncmp)(char *, char *, size_t);
+	struct dtrace_dynvar *(*dynvar)(struct dtrace_dstate *, uint_t,
+	    struct dtrace_key *, size_t dsize, enum dtrace_dynvar_op,
+	    struct dtrace_mstate *, struct dtrace_vstate *);
+} dtrace_jit_helpers_t;
+
+typedef uint64_t (*dtrace_jit_func)(struct dtrace_difo *,
+		struct dtrace_mstate *, struct dtrace_vstate *,
+		struct dtrace_state *, cpu_core_t *, uint_t thiscpu);
+
+extern dtrace_jit_func dtrace_dif_compile(struct dtrace_difo *,
+    struct dtrace_vstate *vstate, dtrace_jit_helpers_t *);
+
+/*
  * DTrace Intermediate Format Object (DIFO)
  *
  * A DIFO is used to store the compiled DIF for a D expression, its return
@@ -870,10 +909,12 @@ typedef struct dof_xlref {
  */
 typedef struct dtrace_difo {
 	dif_instr_t *dtdo_buf;		/* instruction buffer */
+	dtrace_jit_func dtdo_jit;	/* JIT function */
 	uint64_t *dtdo_inttab;		/* integer table (optional) */
 	char *dtdo_strtab;		/* string table (optional) */
 	dtrace_difv_t *dtdo_vartab;	/* variable table (optional) */
 	uint_t dtdo_len;		/* length of instruction buffer */
+	uint_t dtdo_jitlen;		/* length of JIT function */
 	uint_t dtdo_intlen;		/* length of integer table */
 	uint_t dtdo_strlen;		/* length of string table */
 	uint_t dtdo_varlen;		/* length of variable table */

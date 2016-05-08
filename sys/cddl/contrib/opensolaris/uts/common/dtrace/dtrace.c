@@ -409,44 +409,6 @@ static kmutex_t dtrace_errlock;
 
 #define	DTRACE_V4MAPPED_OFFSET		(sizeof (uint32_t) * 3)
 
-/*
- * The key for a thread-local variable consists of the lower 61 bits of the
- * t_did, plus the 3 bits of the highest active interrupt above LOCK_LEVEL.
- * We add DIF_VARIABLE_MAX to t_did to assure that the thread key is never
- * equal to a variable identifier.  This is necessary (but not sufficient) to
- * assure that global associative arrays never collide with thread-local
- * variables.  To guarantee that they cannot collide, we must also define the
- * order for keying dynamic variables.  That order is:
- *
- *   [ key0 ] ... [ keyn ] [ variable-key ] [ tls-key ]
- *
- * Because the variable-key and the tls-key are in orthogonal spaces, there is
- * no way for a global variable key signature to match a thread-local key
- * signature.
- */
-#if defined(sun)
-#define	DTRACE_TLS_THRKEY(where) { \
-	uint_t intr = 0; \
-	uint_t actv = CPU->cpu_intr_actv >> (LOCK_LEVEL + 1); \
-	for (; actv; actv >>= 1) \
-		intr++; \
-	ASSERT(intr < (1 << 3)); \
-	(where) = ((curthread->t_did + DIF_VARIABLE_MAX) & \
-	    (((uint64_t)1 << 61) - 1)) | ((uint64_t)intr << 61); \
-}
-#else
-#define	DTRACE_TLS_THRKEY(where) { \
-	solaris_cpu_t *_c = &solaris_cpu[curcpu]; \
-	uint_t intr = 0; \
-	uint_t actv = _c->cpu_intr_actv; \
-	for (; actv; actv >>= 1) \
-		intr++; \
-	ASSERT(intr < (1 << 3)); \
-	(where) = ((curthread->td_tid + DIF_VARIABLE_MAX) & \
-	    (((uint64_t)1 << 61) - 1)) | ((uint64_t)intr << 61); \
-}
-#endif
-
 #define	DT_BSWAP_8(x)	((x) & 0xff)
 #define	DT_BSWAP_16(x)	((DT_BSWAP_8(x) << 8) | DT_BSWAP_8((x) >> 8))
 #define	DT_BSWAP_32(x)	((DT_BSWAP_16(x) << 16) | DT_BSWAP_16((x) >> 16))
@@ -559,6 +521,7 @@ dtrace_load##bits(uintptr_t addr)					\
 	(act)->dta_difo->dtdo_rtype.dtdt_kind == DIF_TYPE_STRING)
 
 /* Function prototype definitions: */
+static uint64_t dtrace_tls_thrkey(void);
 static size_t dtrace_strlen(const char *, size_t);
 static dtrace_probe_t *dtrace_probe_lookup_id(dtrace_id_t id);
 static void dtrace_enabling_provide(dtrace_provider_t *);
@@ -668,6 +631,44 @@ dtrace_error(uint32_t *counter)
 			nval = 1;
 		}
 	} while (dtrace_cas32(counter, oval, nval) != oval);
+}
+
+/*
+ * The key for a thread-local variable consists of the lower 61 bits of the
+ * t_did, plus the 3 bits of the highest active interrupt above LOCK_LEVEL.
+ * We add DIF_VARIABLE_MAX to t_did to assure that the thread key is never
+ * equal to a variable identifier.  This is necessary (but not sufficient) to
+ * assure that global associative arrays never collide with thread-local
+ * variables.  To guarantee that they cannot collide, we must also define the
+ * order for keying dynamic variables.  That order is:
+ *
+ *   [ key0 ] ... [ keyn ] [ variable-key ] [ tls-key ]
+ *
+ * Because the variable-key and the tls-key are in orthogonal spaces, there is
+ * no way for a global variable key signature to match a thread-local key
+ * signature.
+ */
+static uint64_t
+dtrace_tls_thrkey(void)
+{
+#if defined(sun)
+	uint_t intr = 0;
+	uint_t actv = CPU->cpu_intr_actv >> (LOCK_LEVEL + 1);
+	for (; actv; actv >>= 1)
+		intr++;
+	ASSERT(intr < (1 << 3));
+	return ((curthread->t_did + DIF_VARIABLE_MAX) &
+	    (((uint64_t)1 << 61) - 1)) | ((uint64_t)intr << 61);
+#else
+	solaris_cpu_t *_c = &solaris_cpu[curcpu];
+	uint_t intr = 0;
+	uint_t actv = _c->cpu_intr_actv;
+	for (; actv; actv >>= 1)
+		intr++;
+	ASSERT(intr < (1 << 3));
+	return ((curthread->td_tid + DIF_VARIABLE_MAX) &
+	    (((uint64_t)1 << 61) - 1)) | ((uint64_t)intr << 61);
+#endif
 }
 
 /*
@@ -5911,6 +5912,15 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 	dif_instr_t instr;
 	uint_t r1, r2, rd;
 
+	uint64_t jit_res;
+	if (difo->dtdo_jit) {
+		jit_res = difo->dtdo_jit(difo, mstate, vstate, state,
+		    &cpu_core[curcpu], curcpu);
+		return jit_res;
+	} else {
+		uprintf("That's one that hasn't had the JIT.\n");
+	}
+
 	/*
 	 * We stash the current DIF object into the machine state: we need it
 	 * for subsequent access checking.
@@ -6359,7 +6369,7 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 			key = &tupregs[DIF_DTR_NREGS];
 			key[0].dttk_value = (uint64_t)id;
 			key[0].dttk_size = 0;
-			DTRACE_TLS_THRKEY(key[1].dttk_value);
+			key[1].dttk_value = dtrace_tls_thrkey();
 			key[1].dttk_size = 0;
 
 			dvar = dtrace_dynvar(dstate, 2, key,
@@ -6391,7 +6401,7 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 			key = &tupregs[DIF_DTR_NREGS];
 			key[0].dttk_value = (uint64_t)id;
 			key[0].dttk_size = 0;
-			DTRACE_TLS_THRKEY(key[1].dttk_value);
+			key[1].dttk_value = dtrace_tls_thrkey();
 			key[1].dttk_size = 0;
 			v = &vstate->dtvs_tlocals[id];
 
@@ -6493,7 +6503,7 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 			key[nkeys++].dttk_size = 0;
 
 			if (DIF_INSTR_OP(instr) == DIF_OP_LDTAA) {
-				DTRACE_TLS_THRKEY(key[nkeys].dttk_value);
+				key[nkeys].dttk_value = dtrace_tls_thrkey();
 				key[nkeys++].dttk_size = 0;
 				v = &vstate->dtvs_tlocals[id];
 			} else {
@@ -6533,7 +6543,7 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 			key[nkeys++].dttk_size = 0;
 
 			if (DIF_INSTR_OP(instr) == DIF_OP_STTAA) {
-				DTRACE_TLS_THRKEY(key[nkeys].dttk_value);
+				key[nkeys].dttk_value = dtrace_tls_thrkey();
 				key[nkeys++].dttk_size = 0;
 				v = &vstate->dtvs_tlocals[id];
 			} else {
@@ -6652,6 +6662,13 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 			*((uint64_t *)(uintptr_t)regs[rd]) = regs[r1];
 			break;
 		}
+	}
+
+	if (difo->dtdo_jit) {
+		if (jit_res == rval)
+			uprintf("JIT SUCCESS!!!!\n");
+		else
+			uprintf("JIT failed :(\n");
 	}
 
 	if (!(*flags & CPU_DTRACE_FAULT))
@@ -9578,15 +9595,26 @@ dtrace_difo_validate(dtrace_difo_t *dp, dtrace_vstate_t *vstate, uint_t nregs,
 		case DIF_OP_SUB:
 		case DIF_OP_ADD:
 		case DIF_OP_MUL:
-		case DIF_OP_SDIV:
-		case DIF_OP_UDIV:
-		case DIF_OP_SREM:
-		case DIF_OP_UREM:
 		case DIF_OP_COPYS:
 			if (r1 >= nregs)
 				err += efunc(pc, "invalid register %u\n", r1);
 			if (r2 >= nregs)
 				err += efunc(pc, "invalid register %u\n", r2);
+			if (rd >= nregs)
+				err += efunc(pc, "invalid register %u\n", rd);
+			if (rd == 0)
+				err += efunc(pc, "cannot write to %r0\n");
+			break;
+		case DIF_OP_SDIV:
+		case DIF_OP_UDIV:
+		case DIF_OP_SREM:
+		case DIF_OP_UREM:
+			if (r1 >= nregs)
+				err += efunc(pc, "invalid register %u\n", r1);
+			if (r2 >= nregs)
+				err += efunc(pc, "invalid register %u\n", r2);
+			if (r2 == 0)
+				err += efunc(pc, "cannot use %r0 as divisor\n");
 			if (rd >= nregs)
 				err += efunc(pc, "invalid register %u\n", rd);
 			if (rd == 0)
@@ -10537,6 +10565,8 @@ dtrace_difo_destroy(dtrace_difo_t *dp, dtrace_vstate_t *vstate)
 
 	if (dp->dtdo_buf != NULL)
 		kmem_free(dp->dtdo_buf, dp->dtdo_len * sizeof (dif_instr_t));
+	if (dp->dtdo_jit != NULL)
+		kmem_free(dp->dtdo_jit, dp->dtdo_jitlen);
 	if (dp->dtdo_inttab != NULL)
 		kmem_free(dp->dtdo_inttab, dp->dtdo_intlen * sizeof (uint64_t));
 	if (dp->dtdo_strtab != NULL)
@@ -13370,6 +13400,18 @@ dtrace_dof_difo(dof_hdr_t *dof, dof_sec_t *sec, dtrace_vstate_t *vstate,
 		goto err;
 
 	dtrace_difo_init(dp, vstate);
+
+	// TODO(andrew): This is currently just hanging around for testing.
+	dtrace_jit_helpers_t jit_helpers = {
+		.dif_variable = dtrace_dif_variable,
+		.tls_thrkey = dtrace_tls_thrkey,
+		.canload = dtrace_canload,
+		.load8 = dtrace_load8,
+		.strcanload = dtrace_strcanload,
+		.strncmp = dtrace_strncmp,
+		.dynvar = dtrace_dynvar,
+	};
+	dtrace_dif_compile(dp, vstate, &jit_helpers);
 	return (dp);
 
 err:
