@@ -7026,6 +7026,28 @@ dtrace_store_by_ref(dtrace_difo_t *dp, caddr_t tomax, size_t size,
 	*valoffsp = valoffs;
 }
 
+/////////////////////////
+
+#include <vm/pmap.h>
+#include <machine/vmparam.h>
+
+#define GEM5_ADDR 0xFFFF0000
+uint64_t gem5_setdebugflags(const char*);
+
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
+uint64_t
+__attribute__ ((noinline))
+gem5_setdebugflags(const char* flags)
+{
+  // if (GEM5_ADDR < dmaplimit)
+  volatile uint64_t *vd = (void*)PHYS_TO_DMAP(GEM5_ADDR);
+  return vd[0x59 << 5] + (uintptr_t)flags;
+}
+#pragma GCC pop_options
+
+/////////////////////////
+
 /*
  * If you're looking for the epicenter of DTrace, you just found it.  This
  * is the function called by the provider to fire a probe -- from which all
@@ -7086,6 +7108,8 @@ dtrace_probe(dtrace_id_t id, uintptr_t arg0, uintptr_t arg1,
 		dtrace_interrupt_enable(cookie);
 		return;
 	}
+
+	gem5_setdebugflags("Exec,-ExecSymbol");
 
 	now = mstate.dtms_timestamp = dtrace_gethrtime();
 	mstate.dtms_present |= DTRACE_MSTATE_TIMESTAMP;
@@ -7768,6 +7792,8 @@ dtrace_probe(dtrace_id_t id, uintptr_t arg0, uintptr_t arg1,
 
 	if (vtime)
 		curthread->t_dtrace_start = dtrace_gethrtime();
+
+	gem5_setdebugflags("");
 
 	dtrace_interrupt_enable(cookie);
 }
