@@ -1066,7 +1066,7 @@ dtrace_dif_compile(dtrace_difo_t *difo, dtrace_vstate_t *vstate, dtrace_jit_help
 	difo->dtdo_jit = (dtrace_jit_func)jit;
 	difo->dtdo_jitlen = jitlen;
 
-	return NULL;
+	return difo->dtdo_jit;
 
 fail:
 	if (has_branch)
